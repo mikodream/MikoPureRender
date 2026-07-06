@@ -228,4 +228,33 @@ class LayoutEngineTest {
         assertEquals("A   B", text.textLines().getFirst());
         assertEquals("  C", text.textLines().get(1));
     }
+
+    @Test
+    void preWrapPreservesSpacesAndBlankLines() {
+        DocumentNode document = new HtmlParser().parse("<p>A   B  \n\n  C</p>");
+        StyledNode styled = new StyleResolver().resolve(
+                document,
+                new CssParser().parse("p { white-space: pre-wrap; width: 300px; }")
+        );
+
+        LayoutBox text = new LayoutEngine().layout(styled, 300).children().getFirst().children().getFirst();
+
+        assertEquals("A   B  ", text.textLines().getFirst());
+        assertEquals("", text.textLines().get(1));
+        assertEquals("  C", text.textLines().get(2));
+    }
+
+    @Test
+    void preWrapKeepsLeadingSpacesWhenWrapping() {
+        DocumentNode document = new HtmlParser().parse("<p>    indented words</p>");
+        StyledNode styled = new StyleResolver().resolve(
+                document,
+                new CssParser().parse("p { white-space: pre-wrap; width: 40px; font-size: 16px; }")
+        );
+
+        LayoutBox text = new LayoutEngine().layout(styled, 300).children().getFirst().children().getFirst();
+
+        assertTrue(text.textLines().size() > 1);
+        assertTrue(text.textLines().getFirst().startsWith(" "));
+    }
 }
