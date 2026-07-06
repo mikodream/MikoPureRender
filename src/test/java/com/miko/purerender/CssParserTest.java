@@ -39,4 +39,35 @@ class CssParserTest {
         assertEquals("\"A;B:C\"", sheet.rules().getFirst().declarations().get(1).value());
         assertEquals("red", sheet.rules().getFirst().declarations().get(2).value());
     }
+
+    @Test
+    void keepsBracesInsideDeclarationValues() {
+        StyleSheet sheet = new CssParser().parse("""
+                .icon {
+                  background-image: url("data:image/svg+xml;utf8,<svg>{}</svg>");
+                  content: "}";
+                  color: blue;
+                }
+                .next { color: red; }
+                """);
+
+        assertEquals(2, sheet.rules().size());
+        assertEquals(3, sheet.rules().getFirst().declarations().size());
+        assertEquals("blue", sheet.rules().getFirst().declarations().get(2).value());
+        assertEquals("red", sheet.rules().get(1).declarations().getFirst().value());
+    }
+
+    @Test
+    void doesNotStripCommentTokensInsideStrings() {
+        StyleSheet sheet = new CssParser().parse("""
+                .note {
+                  content: "/* keep */";
+                  color: blue; /* remove */
+                }
+                """);
+
+        assertEquals(2, sheet.rules().getFirst().declarations().size());
+        assertEquals("\"/* keep */\"", sheet.rules().getFirst().declarations().getFirst().value());
+        assertEquals("blue", sheet.rules().getFirst().declarations().get(1).value());
+    }
 }
