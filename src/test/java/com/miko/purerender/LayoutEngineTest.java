@@ -7,6 +7,7 @@ import com.miko.purerender.html.HtmlParser;
 import com.miko.purerender.layout.HitTester;
 import com.miko.purerender.layout.LayoutBox;
 import com.miko.purerender.layout.LayoutEngine;
+import com.miko.purerender.layout.TextControlLayout;
 import com.miko.purerender.style.StyleResolver;
 import com.miko.purerender.style.StyledNode;
 import org.junit.jupiter.api.Test;
@@ -167,6 +168,44 @@ class LayoutEngineTest {
 
         assertEquals(first.y(), second.y());
         assertEquals(first.x() + first.width(), second.x());
+    }
+
+    @Test
+    void laysOutTextAndInlineElementsAsOneRun() {
+        DocumentNode document = new HtmlParser().parse("<p>Hello <span>wide</span> tail</p>");
+        StyledNode styled = new StyleResolver().resolve(
+                document,
+                new CssParser().parse("p { width: 300px; font-size: 16px; } span { padding: 0 4px; }")
+        );
+
+        LayoutBox p = new LayoutEngine().layout(styled, 300).children().getFirst();
+        LayoutBox firstText = p.children().getFirst();
+        LayoutBox span = p.children().get(1);
+        LayoutBox secondText = p.children().get(2);
+
+        assertEquals(firstText.y(), span.y());
+        assertEquals(span.y(), secondText.y());
+        assertEquals(firstText.x() + firstText.width(), span.x(), 0.01);
+        assertEquals(span.x() + span.width(), secondText.x(), 0.01);
+    }
+
+    @Test
+    void continuesInlineRunAfterLastWrappedTextLine() {
+        DocumentNode document = new HtmlParser().parse("<p>aa aa aa <span></span></p>");
+        StyledNode styled = new StyleResolver().resolve(
+                document,
+                new CssParser().parse("p { width: 48px; font-size: 16px; } span { width: 8px; height: 8px; }")
+        );
+
+        LayoutBox p = new LayoutEngine().layout(styled, 300).children().getFirst();
+        LayoutBox text = p.children().getFirst();
+        LayoutBox span = p.children().get(1);
+
+        assertTrue(text.textLines().size() > 1);
+        double lineHeight = text.height() / text.textLines().size();
+        assertEquals(text.y() + (text.textLines().size() - 1) * lineHeight, span.y(), 0.01);
+        double lastLineWidth = TextControlLayout.measureText(text.textLines().getLast(), text.styledNode().style());
+        assertEquals(p.x() + lastLineWidth, span.x(), 0.01);
     }
 
     @Test

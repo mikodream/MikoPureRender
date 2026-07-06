@@ -111,6 +111,7 @@ public final class LayoutEngine {
         double cursorX = contentX;
         double cursorY = contentY;
         double lineHeight = 0;
+        double maxBottom = contentY;
         double lineRight = contentX + Math.max(0, contentWidth);
         for (LayoutBox child : run) {
             layoutBlock(child, 0, cursorY, contentWidth);
@@ -121,10 +122,13 @@ public final class LayoutEngine {
                 layoutBlock(child, 0, cursorY, contentWidth);
             }
             child.translate(cursorX - child.x(), cursorY - child.y());
-            cursorX += child.width();
-            lineHeight = Math.max(lineHeight, child.height());
+            maxBottom = Math.max(maxBottom, child.y() + child.height());
+            InlineAdvance advance = inlineAdvance(child, contentX);
+            cursorX = advance.cursorX();
+            cursorY = advance.cursorY();
+            lineHeight = Math.max(lineHeight, advance.lineHeight());
         }
-        return lineHeight == 0 ? 0 : cursorY - contentY + lineHeight;
+        return Math.max(0, maxBottom - contentY);
     }
 
     private double layoutFlex(LayoutBox box, double contentX, double contentY, double contentWidth) {
@@ -343,6 +347,23 @@ public final class LayoutEngine {
             right = Math.max(right, child.x() + child.width());
         }
         return Math.max(0, right - contentX);
+    }
+
+    private static InlineAdvance inlineAdvance(LayoutBox child, double lineStartX) {
+        if (child.styledNode().node() instanceof TextNode && !child.textLines().isEmpty()) {
+            double lineHeight = lineHeight(child.styledNode().style());
+            List<String> lines = child.textLines();
+            String lastLine = lines.getLast();
+            return new InlineAdvance(
+                    lineStartX + TextControlLayout.measureText(lastLine, child.styledNode().style()),
+                    child.y() + (lines.size() - 1) * lineHeight,
+                    lineHeight
+            );
+        }
+        return new InlineAdvance(child.x() + child.width(), child.y(), child.height());
+    }
+
+    private record InlineAdvance(double cursorX, double cursorY, double lineHeight) {
     }
 
     private static double imageWidth(LayoutBox box, double fallback) {
