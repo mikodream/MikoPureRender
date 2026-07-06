@@ -32,8 +32,8 @@ public final class CssParser {
 
     public List<CssDeclaration> parseDeclarations(String source) {
         List<CssDeclaration> declarations = new ArrayList<>();
-        for (String raw : source.split(";")) {
-            int colon = raw.indexOf(':');
+        for (String raw : splitDeclarations(source)) {
+            int colon = topLevelColon(raw);
             if (colon <= 0) {
                 continue;
             }
@@ -45,5 +45,69 @@ public final class CssParser {
             declarations.add(new CssDeclaration(raw.substring(0, colon), value, important));
         }
         return declarations;
+    }
+
+    private static List<String> splitDeclarations(String source) {
+        List<String> declarations = new ArrayList<>();
+        int start = 0;
+        int depth = 0;
+        char quote = 0;
+        boolean escaped = false;
+        for (int i = 0; i < source.length(); i++) {
+            char ch = source.charAt(i);
+            if (quote != 0) {
+                if (escaped) {
+                    escaped = false;
+                } else if (ch == '\\') {
+                    escaped = true;
+                } else if (ch == quote) {
+                    quote = 0;
+                }
+                continue;
+            }
+            if (ch == '"' || ch == '\'') {
+                quote = ch;
+            } else if (ch == '(') {
+                depth++;
+            } else if (ch == ')' && depth > 0) {
+                depth--;
+            } else if (ch == ';' && depth == 0) {
+                declarations.add(source.substring(start, i));
+                start = i + 1;
+            }
+        }
+        if (start < source.length()) {
+            declarations.add(source.substring(start));
+        }
+        return declarations;
+    }
+
+    private static int topLevelColon(String source) {
+        int depth = 0;
+        char quote = 0;
+        boolean escaped = false;
+        for (int i = 0; i < source.length(); i++) {
+            char ch = source.charAt(i);
+            if (quote != 0) {
+                if (escaped) {
+                    escaped = false;
+                } else if (ch == '\\') {
+                    escaped = true;
+                } else if (ch == quote) {
+                    quote = 0;
+                }
+                continue;
+            }
+            if (ch == '"' || ch == '\'') {
+                quote = ch;
+            } else if (ch == '(') {
+                depth++;
+            } else if (ch == ')' && depth > 0) {
+                depth--;
+            } else if (ch == ':' && depth == 0) {
+                return i;
+            }
+        }
+        return -1;
     }
 }

@@ -188,7 +188,8 @@ public final class JavaFxRenderer {
         if (!(box.styledNode().node() instanceof ElementNode element) || !isTextControl(element)) {
             return;
         }
-        String value = controlText(element);
+        String rawValue = controlText(element);
+        String value = displayControlText(element, rawValue);
         boolean placeholder = value.isEmpty();
         if (placeholder) {
             value = element.attribute("placeholder").orElse("");
@@ -417,5 +418,13 @@ public final class JavaFxRenderer {
         for (DomNode child : node.children()) {
             collectText(child, text);
         }
+    }
+
+    private static String displayControlText(ElementNode element, String text) {
+        if ("input".equals(element.tagName())
+                && element.attribute("type").map(value -> value.equalsIgnoreCase("password")).orElse(false)) {
+            return "*".repeat(text.length());
+        }
+        return text;
     }
 }

@@ -39,9 +39,11 @@ public final class LayoutEngine {
         StyleValues.Edges padding = StyleValues.edges(style, "padding", availableWidth);
         double border = StyleValues.length(style, "border-width", availableWidth, 0);
         double explicitWidth = StyleValues.length(style, "width", availableWidth, Double.NaN);
-        double contentWidth = Double.isNaN(explicitWidth)
+        boolean hasExplicitWidth = !Double.isNaN(explicitWidth);
+        boolean borderBox = "border-box".equals(style.get("box-sizing", "content-box"));
+        double contentWidth = !hasExplicitWidth
                 ? Math.max(0, availableWidth - margin.horizontal() - padding.horizontal() - border * 2)
-                : explicitWidth;
+                : Math.max(0, explicitWidth - (borderBox ? padding.horizontal() + border * 2 : 0));
 
         double outerX = x + margin.left();
         double outerY = y + margin.top();
@@ -55,9 +57,13 @@ public final class LayoutEngine {
             box.setTextLines(lines);
             double lineHeight = lineHeight(style);
             contentHeight = lines.size() * lineHeight;
-            contentWidth = Math.min(contentWidth, maxLineWidth(lines, style));
+            if (!hasExplicitWidth) {
+                contentWidth = Math.min(contentWidth, maxLineWidth(lines, style));
+            }
         } else if (isImage(box)) {
-            contentWidth = imageWidth(box, contentWidth);
+            if (!hasExplicitWidth) {
+                contentWidth = imageWidth(box, contentWidth);
+            }
             contentHeight = imageHeight(box, contentWidth);
         } else if ("flex".equals(display)) {
             contentHeight = layoutFlex(box, contentX, contentY, contentWidth);
@@ -65,25 +71,60 @@ public final class LayoutEngine {
             contentHeight = layoutGrid(box, contentX, contentY, contentWidth);
         } else {
             contentHeight = layoutBlockChildren(box, contentX, contentY, contentWidth);
+            if (!hasExplicitWidth && "inline".equals(display)) {
+                contentWidth = Math.min(contentWidth, childrenContentWidth(box, contentX));
+            }
         }
 
         double explicitHeight = StyleValues.length(style, "height", availableWidth, Double.NaN);
         if (!Double.isNaN(explicitHeight)) {
-            contentHeight = explicitHeight;
+            contentHeight = Math.max(0, explicitHeight - (borderBox ? padding.vertical() + border * 2 : 0));
         }
 
-        double width = contentWidth + padding.horizontal() + border * 2;
-        double height = contentHeight + padding.vertical() + border * 2;
+        double width = hasExplicitWidth && borderBox ? explicitWidth : contentWidth + padding.horizontal() + border * 2;
+        double height = !Double.isNaN(explicitHeight) && borderBox ? explicitHeight : contentHeight + padding.vertical() + border * 2;
         box.setFrame(outerX, outerY, width, height);
         return height + margin.vertical();
     }
 
     private double layoutBlockChildren(LayoutBox box, double contentX, double contentY, double contentWidth) {
         double cursorY = contentY;
+        List<LayoutBox> inlineRun = new ArrayList<>();
         for (LayoutBox child : box.children()) {
+            if (isInlineLevel(child)) {
+                inlineRun.add(child);
+                continue;
+            }
+            if (!inlineRun.isEmpty()) {
+                cursorY += layoutInlineRun(inlineRun, contentX, cursorY, contentWidth);
+                inlineRun.clear();
+            }
             cursorY += layoutBlock(child, contentX, cursorY, contentWidth);
         }
+        if (!inlineRun.isEmpty()) {
+            cursorY += layoutInlineRun(inlineRun, contentX, cursorY, contentWidth);
+        }
         return cursorY - contentY;
+    }
+
+    private double layoutInlineRun(List<LayoutBox> run, double contentX, double contentY, double contentWidth) {
+        double cursorX = contentX;
+        double cursorY = contentY;
+        double lineHeight = 0;
+        double lineRight = contentX + Math.max(0, contentWidth);
+        for (LayoutBox child : run) {
+            layoutBlock(child, 0, cursorY, contentWidth);
+            if (cursorX > contentX && cursorX + child.width() > lineRight) {
+                cursorX = contentX;
+                cursorY += lineHeight;
+                lineHeight = 0;
+                layoutBlock(child, 0, cursorY, contentWidth);
+            }
+            child.translate(cursorX - child.x(), cursorY - child.y());
+            cursorX += child.width();
+            lineHeight = Math.max(lineHeight, child.height());
+        }
+        return lineHeight == 0 ? 0 : cursorY - contentY + lineHeight;
     }
 
     private double layoutFlex(LayoutBox box, double contentX, double contentY, double contentWidth) {
@@ -165,8 +206,7 @@ public final class LayoutEngine {
     }
 
     private static double measureText(String text, ComputedStyle style) {
-        double fontSize = StyleValues.length(style, "font-size", 16);
-        return text.length() * fontSize * 0.56;
+        return TextControlLayout.measureText(text, style);
     }
 
     private static double maxLineWidth(List<String> lines, ComputedStyle style) {
@@ -178,16 +218,27 @@ public final class LayoutEngine {
     }
 
     private static List<String> wrapText(String text, ComputedStyle style, double maxWidth) {
-        if (text.isBlank()) {
+        String whiteSpace = style.get("white-space", "normal").trim().toLowerCase();
+        String prepared = prepareText(text, whiteSpace);
+        if (prepared.isEmpty()) {
             return List.of();
         }
-        if (maxWidth <= 0 || measureText(text, style) <= maxWidth) {
-            return List.of(text);
+        boolean preserveNewlines = "pre".equals(whiteSpace) || "pre-wrap".equals(whiteSpace);
+        boolean wrap = !"pre".equals(whiteSpace) && !"nowrap".equals(whiteSpace);
+        if (!wrap || maxWidth <= 0 || measureText(prepared, style) <= maxWidth) {
+            return preserveNewlines ? List.of(prepared.split("\n", -1)) : List.of(prepared);
         }
 
         List<String> lines = new ArrayList<>();
+        if (preserveNewlines) {
+            for (String paragraph : prepared.split("\n", -1)) {
+                appendPreservedWrappedLines(lines, paragraph, style, maxWidth);
+            }
+            return lines;
+        }
+
         StringBuilder current = new StringBuilder();
-        for (String word : text.split("\\s+")) {
+        for (String word : prepared.trim().split("\\s+")) {
             String candidate = current.isEmpty() ? word : current + " " + word;
             if (measureText(candidate, style) <= maxWidth) {
                 current.setLength(0);
@@ -208,6 +259,49 @@ public final class LayoutEngine {
             lines.add(current.toString());
         }
         return lines;
+    }
+
+    private static String prepareText(String text, String whiteSpace) {
+        if (text == null || text.isEmpty()) {
+            return "";
+        }
+        String normalized = text.replace("\r\n", "\n").replace('\r', '\n');
+        if ("pre".equals(whiteSpace) || "pre-wrap".equals(whiteSpace)) {
+            return normalized;
+        }
+        String collapsed = normalized.replaceAll("\\s+", " ");
+        return collapsed.isBlank() ? "" : collapsed;
+    }
+
+    private static void appendPreservedWrappedLines(List<String> lines, String paragraph, ComputedStyle style, double maxWidth) {
+        if (paragraph.isEmpty()) {
+            lines.add("");
+            return;
+        }
+        int lineStart = 0;
+        while (lineStart < paragraph.length()) {
+            int lineEnd = fittingEnd(paragraph, lineStart, style, maxWidth);
+            lines.add(paragraph.substring(lineStart, lineEnd));
+            lineStart = lineEnd;
+        }
+    }
+
+    private static int fittingEnd(String text, int start, ComputedStyle style, double maxWidth) {
+        int best = start + 1;
+        int lastBreak = -1;
+        for (int i = start + 1; i <= text.length(); i++) {
+            if (Character.isWhitespace(text.charAt(i - 1))) {
+                lastBreak = i;
+            }
+            if (measureText(text.substring(start, i), style) > maxWidth) {
+                if (lastBreak > start) {
+                    return lastBreak;
+                }
+                return best;
+            }
+            best = i;
+        }
+        return text.length();
     }
 
     private static List<String> splitLongWord(String word, ComputedStyle style, double maxWidth) {
@@ -236,6 +330,19 @@ public final class LayoutEngine {
     private static boolean isFormControl(StyledNode styledNode) {
         return styledNode.node() instanceof ElementNode element
                 && ("input".equals(element.tagName()) || "textarea".equals(element.tagName()));
+    }
+
+    private static boolean isInlineLevel(LayoutBox box) {
+        String display = box.styledNode().style().get("display", "block");
+        return "inline".equals(display) || "text".equals(display);
+    }
+
+    private static double childrenContentWidth(LayoutBox box, double contentX) {
+        double right = contentX;
+        for (LayoutBox child : box.children()) {
+            right = Math.max(right, child.x() + child.width());
+        }
+        return Math.max(0, right - contentX);
     }
 
     private static double imageWidth(LayoutBox box, double fallback) {

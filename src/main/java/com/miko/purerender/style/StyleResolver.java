@@ -134,6 +134,9 @@ public final class StyleResolver {
                 style.set("overflow-y", "auto");
                 style.set("white-space", "pre-wrap");
             }
+            if (tag.equals("pre")) {
+                style.set("white-space", "pre");
+            }
             if (tag.matches("h[1-6]")) {
                 style.set("font-weight", "bold");
                 style.set("font-size", tag.equals("h1") ? "32px" : "24px");
@@ -165,6 +168,9 @@ public final class StyleResolver {
                 style.set("cursor", "text");
                 style.set("user-select", "text");
                 style.set("white-space", "pre-wrap");
+            }
+            if ("pre".equals(element.tagName())) {
+                style.set("white-space", "pre");
             }
         }
     }

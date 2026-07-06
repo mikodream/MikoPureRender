@@ -97,10 +97,14 @@ public final class HtmlParser {
             parent.appendChild(new TextNode(text));
             return;
         }
+        if (parent instanceof ElementNode element && "pre".equals(element.tagName())) {
+            parent.appendChild(new TextNode(decodeEntities(rawText.replace("\r\n", "\n").replace('\r', '\n'))));
+            return;
+        }
         if (rawText.isBlank()) {
             return;
         }
-        parent.appendChild(new TextNode(decodeEntities(rawText.replaceAll("\\s+", " ").trim())));
+        parent.appendChild(new TextNode(decodeEntities(rawText.replace("\r\n", "\n").replace('\r', '\n'))));
     }
 
     private static String decodeEntities(String value) {

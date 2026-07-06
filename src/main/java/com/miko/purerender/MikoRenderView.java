@@ -93,9 +93,12 @@ public final class MikoRenderView extends Region {
             activeElement = elementAt(event.getX(), event.getY());
             focusedElement = activeElement;
             if (isTextControl(focusedElement)) {
-                caretPositions.put(focusedElement, caretOffsetAt(focusedElement, event.getX(), event.getY()));
+                int offset = caretOffsetAt(focusedElement, event.getX(), event.getY());
+                caretPositions.put(focusedElement, offset);
                 clearSelection();
-                clearControlSelection();
+                controlSelectionAnchor = offset;
+                controlSelectionFocus = offset;
+                selectingText = true;
                 layoutAndPaint();
                 return;
             }
@@ -112,6 +115,11 @@ public final class MikoRenderView extends Region {
         canvas.setOnMouseDragged(event -> {
             if (scrollbarDrag != null) {
                 dragScrollbar(event.getX(), event.getY());
+            } else if (selectingText && isTextControl(focusedElement)) {
+                int offset = caretOffsetAt(focusedElement, event.getX(), event.getY());
+                caretPositions.put(focusedElement, offset);
+                controlSelectionFocus = offset;
+                layoutAndPaint();
             } else if (selectingText) {
                 textOffsetAt(event.getX(), event.getY()).ifPresent(offset -> {
                     selectionFocus = offset;
@@ -144,11 +152,17 @@ public final class MikoRenderView extends Region {
             } else if (event.isShortcutDown() && event.getCode() == KeyCode.C) {
                 copySelectionToClipboard();
                 event.consume();
+            } else if (event.isShortcutDown() && event.getCode() == KeyCode.X && isTextControl(focusedElement)) {
+                cutControlSelectionToClipboard();
+                event.consume();
+            } else if (event.isShortcutDown() && event.getCode() == KeyCode.V && isTextControl(focusedElement)) {
+                pasteClipboardIntoControl();
+                event.consume();
             } else if (event.getCode() == KeyCode.ESCAPE) {
                 clearSelection();
                 clearControlSelection();
                 layoutAndPaint();
-            } else if (isTextControl(focusedElement) && handleTextControlKeyPressed(event.getCode())) {
+            } else if (isTextControl(focusedElement) && handleTextControlKeyPressed(event.getCode(), event.isShiftDown())) {
                 event.consume();
             }
         });
@@ -490,12 +504,15 @@ public final class MikoRenderView extends Region {
         layoutAndPaint();
     }
 
-    private boolean handleTextControlKeyPressed(KeyCode code) {
+    private boolean handleTextControlKeyPressed(KeyCode code, boolean shiftDown) {
         ElementNode control = focusedElement;
         int caret = caretPositions.getOrDefault(control, controlText(control).length());
         String text = controlText(control);
         switch (code) {
             case BACK_SPACE -> {
+                if (!isEditableTextControl(control)) {
+                    return true;
+                }
                 if (deleteControlSelection()) {
                     layoutAndPaint();
                     return true;
@@ -508,6 +525,9 @@ public final class MikoRenderView extends Region {
                 return true;
             }
             case DELETE -> {
+                if (!isEditableTextControl(control)) {
+                    return true;
+                }
                 if (deleteControlSelection()) {
                     layoutAndPaint();
                     return true;
@@ -520,31 +540,27 @@ public final class MikoRenderView extends Region {
                 return true;
             }
             case LEFT -> {
-                caretPositions.put(control, Math.max(0, caret - 1));
-                clearControlSelection();
+                moveControlCaret(control, Math.max(0, caret - 1), shiftDown);
                 layoutAndPaint();
                 return true;
             }
             case RIGHT -> {
-                caretPositions.put(control, Math.min(text.length(), caret + 1));
-                clearControlSelection();
+                moveControlCaret(control, Math.min(text.length(), caret + 1), shiftDown);
                 layoutAndPaint();
                 return true;
             }
             case HOME -> {
-                caretPositions.put(control, 0);
-                clearControlSelection();
+                moveControlCaret(control, 0, shiftDown);
                 layoutAndPaint();
                 return true;
             }
             case END -> {
-                caretPositions.put(control, text.length());
-                clearControlSelection();
+                moveControlCaret(control, text.length(), shiftDown);
                 layoutAndPaint();
                 return true;
             }
             case ENTER -> {
-                if ("textarea".equals(control.tagName())) {
+                if ("textarea".equals(control.tagName()) && isEditableTextControl(control)) {
                     insertTextAtCaret("\n");
                     return true;
                 }
@@ -556,9 +572,27 @@ public final class MikoRenderView extends Region {
         }
     }
 
+    private void moveControlCaret(ElementNode control, int nextCaret, boolean extendingSelection) {
+        String text = controlText(control);
+        int clamped = Math.max(0, Math.min(nextCaret, text.length()));
+        int previous = Math.max(0, Math.min(caretPositions.getOrDefault(control, text.length()), text.length()));
+        if (extendingSelection) {
+            if (controlSelectionAnchor == null) {
+                controlSelectionAnchor = previous;
+            }
+            controlSelectionFocus = clamped;
+        } else {
+            clearControlSelection();
+        }
+        caretPositions.put(control, clamped);
+    }
+
     private boolean insertTypedText(String text) {
         if (text == null || text.isEmpty() || text.charAt(0) < 0x20) {
             return false;
+        }
+        if (!isEditableTextControl(focusedElement)) {
+            return true;
         }
         if ("input".equals(focusedElement.tagName())) {
             text = text.replace("\r", "").replace("\n", "");
@@ -572,6 +606,13 @@ public final class MikoRenderView extends Region {
 
     private void insertTextAtCaret(String inserted) {
         ElementNode control = focusedElement;
+        if (!isEditableTextControl(control)) {
+            return;
+        }
+        inserted = clampInsertedText(control, inserted);
+        if (inserted.isEmpty() && !hasControlSelection()) {
+            return;
+        }
         String text = controlText(control);
         int caret = Math.max(0, Math.min(caretPositions.getOrDefault(control, text.length()), text.length()));
         if (hasControlSelection()) {
@@ -588,6 +629,9 @@ public final class MikoRenderView extends Region {
     }
 
     private boolean deleteControlSelection() {
+        if (!isEditableTextControl(focusedElement)) {
+            return false;
+        }
         if (!hasControlSelection()) {
             return false;
         }
@@ -599,6 +643,35 @@ public final class MikoRenderView extends Region {
         caretPositions.put(control, start);
         clearControlSelection();
         return true;
+    }
+
+    private void cutControlSelectionToClipboard() {
+        if (!hasControlSelection()) {
+            return;
+        }
+        int start = controlSelectionStart();
+        int end = controlSelectionEnd();
+        ClipboardContent content = new ClipboardContent();
+        content.putString(controlText(focusedElement).substring(start, end));
+        Clipboard.getSystemClipboard().setContent(content);
+        if (isEditableTextControl(focusedElement)) {
+            deleteControlSelection();
+            layoutAndPaint();
+        }
+    }
+
+    private void pasteClipboardIntoControl() {
+        if (!isEditableTextControl(focusedElement)) {
+            return;
+        }
+        String text = Clipboard.getSystemClipboard().getString();
+        if (text == null || text.isEmpty()) {
+            return;
+        }
+        if ("input".equals(focusedElement.tagName())) {
+            text = text.replace("\r", "").replace("\n", "");
+        }
+        insertTextAtCaret(text);
     }
 
     private void paintControlSelection() {
@@ -676,6 +749,12 @@ public final class MikoRenderView extends Region {
         return element != null && ("input".equals(element.tagName()) || "textarea".equals(element.tagName()));
     }
 
+    private static boolean isEditableTextControl(ElementNode element) {
+        return isTextControl(element)
+                && element.attribute("disabled").isEmpty()
+                && element.attribute("readonly").isEmpty();
+    }
+
     private static String controlText(ElementNode element) {
         if ("input".equals(element.tagName())) {
             return element.attribute("value").orElse("");
@@ -683,6 +762,49 @@ public final class MikoRenderView extends Region {
         StringBuilder text = new StringBuilder();
         collectText(element, text);
         return text.toString();
+    }
+
+    private static String displayControlText(ElementNode element, String text) {
+        if ("input".equals(element.tagName())
+                && element.attribute("type").map(value -> value.equalsIgnoreCase("password")).orElse(false)) {
+            return "*".repeat(text.length());
+        }
+        return text;
+    }
+
+    private static int maxLength(ElementNode element) {
+        return element.attribute("maxlength")
+                .map(value -> {
+                    try {
+                        return Integer.parseInt(value.trim());
+                    } catch (NumberFormatException ignored) {
+                        return -1;
+                    }
+                })
+                .orElse(-1);
+    }
+
+    private String clampInsertedText(ElementNode control, String inserted) {
+        if (inserted == null) {
+            return "";
+        }
+        if ("input".equals(control.tagName())) {
+            inserted = inserted.replace("\r", "").replace("\n", "");
+        } else {
+            inserted = inserted.replace("\r\n", "\n").replace('\r', '\n');
+        }
+
+        int maxLength = maxLength(control);
+        if (maxLength < 0) {
+            return inserted;
+        }
+        String current = controlText(control);
+        int selectedLength = hasControlSelection() ? controlSelectionEnd() - controlSelectionStart() : 0;
+        int available = maxLength - (current.length() - selectedLength);
+        if (available <= 0) {
+            return "";
+        }
+        return inserted.length() <= available ? inserted : inserted.substring(0, available);
     }
 
     private static void setControlText(ElementNode element, String text) {
@@ -722,7 +844,8 @@ public final class MikoRenderView extends Region {
     }
 
     private TextControlLayout.Metrics textControlMetrics(LayoutBox box, ElementNode element) {
-        return TextControlLayout.compute(element, box.styledNode().style(), box.width(), box.height(), controlText(element));
+        String text = controlText(element);
+        return TextControlLayout.compute(element, box.styledNode().style(), box.width(), box.height(), displayControlText(element, text));
     }
 
     private void applyScrollOffsets(LayoutBox box) {

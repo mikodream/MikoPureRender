@@ -138,4 +138,55 @@ class LayoutEngineTest {
         assertEquals(0, textarea.children().size());
         assertEquals(102, textarea.height());
     }
+
+    @Test
+    void borderBoxWidthIncludesPaddingAndBorder() {
+        DocumentNode document = new HtmlParser().parse("<div></div>");
+        StyledNode styled = new StyleResolver().resolve(
+                document,
+                new CssParser().parse("div { box-sizing: border-box; width: 100px; height: 40px; padding: 10px; border-width: 2px; }")
+        );
+
+        LayoutBox div = new LayoutEngine().layout(styled, 300).children().getFirst();
+
+        assertEquals(100, div.width());
+        assertEquals(40, div.height());
+    }
+
+    @Test
+    void placesInlineChildrenOnSameLineUntilTheyWrap() {
+        DocumentNode document = new HtmlParser().parse("<p><span>A</span><span>B</span></p>");
+        StyledNode styled = new StyleResolver().resolve(
+                document,
+                new CssParser().parse("p { width: 200px; } span { width: 20px; height: 10px; }")
+        );
+
+        LayoutBox p = new LayoutEngine().layout(styled, 300).children().getFirst();
+        LayoutBox first = p.children().getFirst();
+        LayoutBox second = p.children().get(1);
+
+        assertEquals(first.y(), second.y());
+        assertEquals(first.x() + first.width(), second.x());
+    }
+
+    @Test
+    void collapsesNormalWhitespaceAtLayoutTime() {
+        DocumentNode document = new HtmlParser().parse("<p>Hello   Java</p>");
+        StyledNode styled = new StyleResolver().resolve(document, new CssParser().parse(""));
+
+        LayoutBox text = new LayoutEngine().layout(styled, 300).children().getFirst().children().getFirst();
+
+        assertEquals("Hello Java", text.textLines().getFirst().trim());
+    }
+
+    @Test
+    void preservesWhitespaceForPre() {
+        DocumentNode document = new HtmlParser().parse("<pre>A   B\n  C</pre>");
+        StyledNode styled = new StyleResolver().resolve(document, new CssParser().parse(""));
+
+        LayoutBox text = new LayoutEngine().layout(styled, 300).children().getFirst().children().getFirst();
+
+        assertEquals("A   B", text.textLines().getFirst());
+        assertEquals("  C", text.textLines().get(1));
+    }
 }
