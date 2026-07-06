@@ -15,6 +15,7 @@ import com.miko.purerender.html.HtmlParser;
 import com.miko.purerender.layout.HitTester;
 import com.miko.purerender.layout.LayoutBox;
 import com.miko.purerender.layout.LayoutEngine;
+import com.miko.purerender.layout.TextEditModel;
 import com.miko.purerender.layout.TextControlLayout;
 import com.miko.purerender.layout.TextLineMetrics;
 import com.miko.purerender.layout.TextNavigation;
@@ -524,13 +525,10 @@ public final class MikoRenderView extends Region {
                 if (!isEditableTextControl(control)) {
                     return true;
                 }
-                if (deleteControlSelection()) {
-                    layoutAndPaint();
-                    return true;
-                }
-                if (caret > 0) {
-                    setControlText(control, text.substring(0, caret - 1) + text.substring(caret));
-                    caretPositions.put(control, caret - 1);
+                TextEditModel model = textEditModel(control);
+                applyControlSelection(model);
+                if (model.backspace()) {
+                    applyTextEditModel(control, model);
                     layoutAndPaint();
                 }
                 return true;
@@ -539,13 +537,10 @@ public final class MikoRenderView extends Region {
                 if (!isEditableTextControl(control)) {
                     return true;
                 }
-                if (deleteControlSelection()) {
-                    layoutAndPaint();
-                    return true;
-                }
-                if (caret < text.length()) {
-                    setControlText(control, text.substring(0, caret) + text.substring(caret + 1));
-                    caretPositions.put(control, caret);
+                TextEditModel model = textEditModel(control);
+                applyControlSelection(model);
+                if (model.deleteForward()) {
+                    applyTextEditModel(control, model);
                     layoutAndPaint();
                 }
                 return true;
@@ -620,23 +615,12 @@ public final class MikoRenderView extends Region {
         if (!isEditableTextControl(control)) {
             return;
         }
-        inserted = clampInsertedText(control, inserted);
-        if (inserted.isEmpty() && !hasControlSelection()) {
-            return;
+        TextEditModel model = textEditModel(control);
+        applyControlSelection(model);
+        if (model.insert(inserted)) {
+            applyTextEditModel(control, model);
+            layoutAndPaint();
         }
-        String text = controlText(control);
-        int caret = Math.max(0, Math.min(caretPositions.getOrDefault(control, text.length()), text.length()));
-        if (hasControlSelection()) {
-            int start = controlSelectionStart();
-            int end = controlSelectionEnd();
-            setControlText(control, text.substring(0, start) + inserted + text.substring(end));
-            caretPositions.put(control, start + inserted.length());
-            clearControlSelection();
-        } else {
-            setControlText(control, text.substring(0, caret) + inserted + text.substring(caret));
-            caretPositions.put(control, caret + inserted.length());
-        }
-        layoutAndPaint();
     }
 
     private boolean deleteControlSelection() {
@@ -647,13 +631,13 @@ public final class MikoRenderView extends Region {
             return false;
         }
         ElementNode control = focusedElement;
-        String text = controlText(control);
-        int start = controlSelectionStart();
-        int end = controlSelectionEnd();
-        setControlText(control, text.substring(0, start) + text.substring(end));
-        caretPositions.put(control, start);
-        clearControlSelection();
-        return true;
+        TextEditModel model = textEditModel(control);
+        applyControlSelection(model);
+        if (model.deleteSelection()) {
+            applyTextEditModel(control, model);
+            return true;
+        }
+        return false;
     }
 
     private void cutControlSelectionToClipboard() {
@@ -795,29 +779,6 @@ public final class MikoRenderView extends Region {
                 .orElse(-1);
     }
 
-    private String clampInsertedText(ElementNode control, String inserted) {
-        if (inserted == null) {
-            return "";
-        }
-        if ("input".equals(control.tagName())) {
-            inserted = inserted.replace("\r", "").replace("\n", "");
-        } else {
-            inserted = inserted.replace("\r\n", "\n").replace('\r', '\n');
-        }
-
-        int maxLength = maxLength(control);
-        if (maxLength < 0) {
-            return inserted;
-        }
-        String current = controlText(control);
-        int selectedLength = hasControlSelection() ? controlSelectionEnd() - controlSelectionStart() : 0;
-        int available = maxLength - (current.length() - selectedLength);
-        if (available <= 0) {
-            return "";
-        }
-        return inserted.length() <= available ? inserted : inserted.substring(0, available);
-    }
-
     private static void setControlText(ElementNode element, String text) {
         if ("input".equals(element.tagName())) {
             element.setAttribute("value", text);
@@ -825,6 +786,30 @@ public final class MikoRenderView extends Region {
             element.clearChildren();
             element.appendChild(new TextNode(text));
         }
+    }
+
+    private TextEditModel textEditModel(ElementNode control) {
+        String text = controlText(control);
+        int caret = Math.max(0, Math.min(caretPositions.getOrDefault(control, text.length()), text.length()));
+        return new TextEditModel(
+                text,
+                caret,
+                "textarea".equals(control.tagName()),
+                maxLength(control),
+                isEditableTextControl(control)
+        );
+    }
+
+    private void applyControlSelection(TextEditModel model) {
+        if (hasControlSelection()) {
+            model.select(controlSelectionAnchor, controlSelectionFocus);
+        }
+    }
+
+    private void applyTextEditModel(ElementNode control, TextEditModel model) {
+        setControlText(control, model.text());
+        caretPositions.put(control, model.caret());
+        clearControlSelection();
     }
 
     private static void collectText(DomNode node, StringBuilder text) {
