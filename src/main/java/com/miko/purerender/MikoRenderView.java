@@ -16,6 +16,7 @@ import com.miko.purerender.layout.HitTester;
 import com.miko.purerender.layout.LayoutBox;
 import com.miko.purerender.layout.LayoutEngine;
 import com.miko.purerender.layout.TextControlLayout;
+import com.miko.purerender.layout.TextLineMetrics;
 import com.miko.purerender.paint.JavaFxRenderer;
 import com.miko.purerender.style.StyleResolver;
 import com.miko.purerender.style.StyleValues;
@@ -386,11 +387,9 @@ public final class MikoRenderView extends Region {
     private Optional<Integer> textOffsetAt(double x, double y) {
         for (TextRun run : textRuns) {
             double lineHeight = lineHeight(run.box());
-                double lineTop = visualY(run.box()) + run.lineIndex() * lineHeight;
-                if (y >= lineTop && y <= lineTop + lineHeight) {
-                    double charWidth = charWidth(run.box());
-                int offsetInLine = (int) Math.round((x - visualX(run.box())) / charWidth);
-                offsetInLine = Math.max(0, Math.min(run.text().length(), offsetInLine));
+            double lineTop = visualY(run.box()) + run.lineIndex() * lineHeight;
+            if (y >= lineTop && y <= lineTop + lineHeight) {
+                int offsetInLine = TextLineMetrics.offsetAt(run.prefixWidths(), x - visualX(run.box()));
                 return Optional.of(run.start() + offsetInLine);
             }
         }
@@ -417,7 +416,14 @@ public final class MikoRenderView extends Region {
                 }
                 int start = text.length();
                 text.append(lines.get(i));
-                textRuns.add(new TextRun(box, i, lines.get(i), start, text.length()));
+                textRuns.add(new TextRun(
+                        box,
+                        i,
+                        lines.get(i),
+                        start,
+                        text.length(),
+                        TextLineMetrics.prefixWidths(lines.get(i), box.styledNode().style())
+                ));
             }
         }
         for (LayoutBox child : box.children()) {
@@ -440,11 +446,12 @@ public final class MikoRenderView extends Region {
             if (overlapStart >= overlapEnd) {
                 continue;
             }
-            double charWidth = charWidth(run.box());
             double lineHeight = lineHeight(run.box());
-            double x = visualX(run.box()) + (overlapStart - run.start()) * charWidth;
+            double x = visualX(run.box()) + TextLineMetrics.xForOffset(run.prefixWidths(), overlapStart - run.start());
             double y = visualY(run.box()) + run.lineIndex() * lineHeight;
-            double width = Math.max(1, (overlapEnd - overlapStart) * charWidth);
+            double width = Math.max(1,
+                    TextLineMetrics.xForOffset(run.prefixWidths(), overlapEnd - run.start())
+                            - TextLineMetrics.xForOffset(run.prefixWidths(), overlapStart - run.start()));
             graphics.fillRect(x, y, width, lineHeight);
         }
         graphics.restore();
@@ -834,10 +841,6 @@ public final class MikoRenderView extends Region {
         }
     }
 
-    private static double charWidth(LayoutBox box) {
-        return StyleValues.length(box.styledNode().style(), "font-size", 16) * 0.56;
-    }
-
     private static double lineHeight(LayoutBox box) {
         double fontSize = StyleValues.length(box.styledNode().style(), "font-size", 16);
         return StyleValues.length(box.styledNode().style(), "line-height", fontSize * 1.35);
@@ -1198,7 +1201,7 @@ public final class MikoRenderView extends Region {
         }
     }
 
-    private record TextRun(LayoutBox box, int lineIndex, String text, int start, int end) {
+    private record TextRun(LayoutBox box, int lineIndex, String text, int start, int end, double[] prefixWidths) {
     }
 
     private enum ScrollbarAxis {
