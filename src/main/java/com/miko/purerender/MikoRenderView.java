@@ -17,6 +17,7 @@ import com.miko.purerender.layout.LayoutBox;
 import com.miko.purerender.layout.LayoutEngine;
 import com.miko.purerender.layout.TextControlLayout;
 import com.miko.purerender.layout.TextLineMetrics;
+import com.miko.purerender.layout.TextNavigation;
 import com.miko.purerender.paint.JavaFxRenderer;
 import com.miko.purerender.style.StyleResolver;
 import com.miko.purerender.style.StyleValues;
@@ -163,7 +164,10 @@ public final class MikoRenderView extends Region {
                 clearSelection();
                 clearControlSelection();
                 layoutAndPaint();
-            } else if (isTextControl(focusedElement) && handleTextControlKeyPressed(event.getCode(), event.isShiftDown())) {
+            } else if (isTextControl(focusedElement) && handleTextControlKeyPressed(
+                    event.getCode(),
+                    event.isShiftDown(),
+                    event.isShortcutDown())) {
                 event.consume();
             }
         });
@@ -511,7 +515,7 @@ public final class MikoRenderView extends Region {
         layoutAndPaint();
     }
 
-    private boolean handleTextControlKeyPressed(KeyCode code, boolean shiftDown) {
+    private boolean handleTextControlKeyPressed(KeyCode code, boolean shiftDown, boolean shortcutDown) {
         ElementNode control = focusedElement;
         int caret = caretPositions.getOrDefault(control, controlText(control).length());
         String text = controlText(control);
@@ -547,22 +551,22 @@ public final class MikoRenderView extends Region {
                 return true;
             }
             case LEFT -> {
-                moveControlCaret(control, Math.max(0, caret - 1), shiftDown);
+                moveControlCaret(control, shortcutDown ? TextNavigation.previousWordBoundary(text, caret) : Math.max(0, caret - 1), shiftDown);
                 layoutAndPaint();
                 return true;
             }
             case RIGHT -> {
-                moveControlCaret(control, Math.min(text.length(), caret + 1), shiftDown);
+                moveControlCaret(control, shortcutDown ? TextNavigation.nextWordBoundary(text, caret) : Math.min(text.length(), caret + 1), shiftDown);
                 layoutAndPaint();
                 return true;
             }
             case HOME -> {
-                moveControlCaret(control, 0, shiftDown);
+                moveControlCaret(control, TextNavigation.lineStart(text, caret), shiftDown);
                 layoutAndPaint();
                 return true;
             }
             case END -> {
-                moveControlCaret(control, text.length(), shiftDown);
+                moveControlCaret(control, TextNavigation.lineEnd(text, caret), shiftDown);
                 layoutAndPaint();
                 return true;
             }
